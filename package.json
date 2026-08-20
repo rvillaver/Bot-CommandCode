@@ -1,0 +1,26 @@
+{
+  "name": "cmd-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord relay for Command Code — chat interface with interaction-aware question buttons",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "bot": "tsx bot/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "bin": {
+    "cmd-relay": "./bin/cmd-relay.mjs"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}
