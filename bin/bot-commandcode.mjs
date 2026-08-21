@@ -12,6 +12,7 @@
  *   bot-commandcode ask [--channel ID | --project ID | --dir PATH] <question> <option1> [option2]...
  *   bot-commandcode doctor
  *   bot-commandcode setup
+ *   bot-commandcode uninstall
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -281,6 +282,50 @@ async function pm2Logs() {
   execSync('pm2 logs bot-commandcode', { stdio: 'inherit' });
 }
 
+async function uninstall() {
+  const { execSync } = await import('node:child_process');
+  console.error('This will:');
+  console.error('  1. Stop and remove the bot service from pm2');
+  console.error('  2. Unregister the bot-cmd-push MCP server (cmd mcp remove)');
+  console.error('  3. Remove the bot-cmd-push skill from this project (cmd skills remove)');
+  console.error('');
+  console.error('Project registry (data/projects.json) and Discord channel bindings are left in place.');
+  console.error('');
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((resolve) => rl.question('Type "uninstall" to confirm: ', resolve));
+  rl.close();
+  if (answer.trim() !== 'uninstall') {
+    fail('aborted — no changes made');
+  }
+
+  // 1. Stop + remove from pm2 (ignore errors — may not be running).
+  try { execSync('pm2 stop bot-commandcode', { stdio: 'ignore' }); } catch { /* not running */ }
+  try { execSync('pm2 delete bot-commandcode', { stdio: 'inherit' }); } catch { /* not registered */ }
+  console.log('✓ stopped and removed bot-commandcode from pm2');
+
+  // 2. Unregister the MCP server.
+  try {
+    execSync('cmd mcp remove bot-cmd-push', { stdio: 'inherit' });
+    console.log('✓ removed bot-cmd-push MCP server');
+  } catch {
+    console.log('ℹ bot-cmd-push MCP server was not registered (or cmd unavailable)');
+  }
+
+  // 3. Remove the installed skill (project scope).
+  const skillDir = resolve(ROOT, '.commandcode', 'skills', 'bot-cmd-push');
+  const { rmSync } = await import('node:fs');
+  if (existsSync(skillDir)) {
+    rmSync(skillDir, { recursive: true, force: true });
+    console.log(`✓ removed skill folder ${skillDir}`);
+  } else {
+    console.log('ℹ no local bot-cmd-push skill folder to remove');
+  }
+
+  console.log('');
+  console.log('Done. The bot is uninstalled from this machine.');
+}
+
 async function push() {
   // Parse: push [--channel ID | --project ID | --dir PATH] <message...>
   let channelId, projectId, dir = process.cwd(), message = '';
@@ -482,6 +527,7 @@ async function main() {
   else if (cmd === 'ask') await ask();
   else if (cmd === 'doctor') await doctor();
   else if (cmd === 'setup') await setup();
+  else if (cmd === 'uninstall') await uninstall();
   else {
     console.log(`Usage:
   bot-commandcode projects add <id> --dir <path> [--model m] [--max-turns n] [--tools a,b] [--config k=v ...] [--permission-mode default|auto-accept|plan|dont-ask|bypass] [--yolo]
@@ -493,7 +539,8 @@ async function main() {
   bot-commandcode push [--channel ID | --project ID | --dir PATH] <message>
   bot-commandcode ask [--channel ID | --project ID | --dir PATH] <question> <option1> [option2]...
   bot-commandcode doctor
-  bot-commandcode setup`);
+  bot-commandcode setup
+  bot-commandcode uninstall`);
     process.exit(1);
   }
 }

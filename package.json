@@ -18,6 +18,7 @@
     "botcmd:restart": "node bin/bot-commandcode.mjs pm2 restart",
     "botcmd:start": "node bin/bot-commandcode.mjs pm2 start",
     "botcmd:stop": "node bin/bot-commandcode.mjs pm2 stop",
+    "botcmd:uninstall": "node bin/bot-commandcode.mjs uninstall",
     "botcmd:status": "node bin/bot-commandcode.mjs pm2 status",
     "botcmd:logs": "node bin/bot-commandcode.mjs pm2 logs",
     "test": "tsx --test test/**/*.test.ts",
