@@ -11,6 +11,7 @@
     "bot": "tsx bot/index.ts",
     "start": "npm run botcmd:start",
     "botcmd": "node bin/bot-commandcode.mjs",
+    "botcmd:help": "node bin/bot-commandcode.mjs help",
     "botcmd:ask": "node bin/bot-commandcode.mjs ask",
     "botcmd:doctor": "node bin/bot-commandcode.mjs doctor",
     "botcmd:setup": "node bin/bot-commandcode.mjs setup",

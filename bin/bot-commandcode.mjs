@@ -519,6 +519,46 @@ async function setup() {
   console.log('Run `botcmd doctor` to check your setup at any time.');
 }
 
+async function help() {
+  console.log(`bot-commandcode — Discord chat interface for Command Code
+
+ACTIONS:
+  projects add <id> --dir <path> [--model m] [--max-turns n] [--tools a,b] [--config k=v ...]
+      [--permission-mode default|auto-accept|plan|dont-ask|bypass] [--yolo]
+      Register a project directory and (optionally) bind it to a Discord channel.
+      --permission-mode bypass (or --yolo) enables writes in headless mode.
+  projects list                 List registered projects.
+  projects rm <id>              Remove a project registration.
+  bind <channelId> <projectId>  Bind a Discord channel to a project.
+  unbind <channelId>            Remove a channel binding.
+  pm2 start                     Start the bot service under pm2 (auto-restarts on crash).
+  pm2 stop                      Stop the service (keeps it registered, restartable).
+  pm2 restart                   Restart the service.
+  pm2 status                    Show service status/uptime.
+  pm2 logs                      Tail the service logs.
+  push [--dir PATH|--project ID|--channel ID] <message>
+      Post an update to the bound Discord channel (defaults to pwd).
+  ask [--dir PATH|--project ID|--channel ID] <question> <option1> [option2]...
+      Post a question with buttons; prints the clicked answer. Blocks until answered.
+  doctor                        Check node, cmd, pm2, .env, DISCORD_TOKEN, and bridge.
+  setup                         Interactive setup guide (Discord app, token, bind channel).
+  uninstall                     Stop + remove the pm2 service, MCP server, and skill.
+
+MCP:
+  The bot serves an MCP server on the bridge: POST http://127.0.0.1:8787/mcp
+  (JSON-RPC: initialize, tools/list, tools/call — push_message, ask_question,
+  list_projects). It starts automatically with the bot — there is no separate
+  "start MCP" step. Register it in a project with:
+      cmd mcp add --transport http bot-cmd-push http://127.0.0.1:8787/mcp
+  Then agents in that project get mcp__bot-cmd-push__* tools.
+
+START:
+  npm run botcmd:start     # start the bot under pm2 (MCP becomes live)
+  npm run botcmd:status    # confirm it's online
+  npm run botcmd:doctor    # same as 'bot-commandcode doctor'
+`);
+}
+
 async function main() {
   if (cmd === 'projects' && args[0] === 'add') await projectsAdd();
   else if (cmd === 'projects' && args[0] === 'list') await projectsList();
@@ -535,6 +575,7 @@ async function main() {
   else if (cmd === 'doctor') await doctor();
   else if (cmd === 'setup') await setup();
   else if (cmd === 'uninstall') await uninstall();
+  else if (cmd === 'help' || cmd === '--help' || cmd === '-h') await help();
   else {
     console.log(`Usage:
   bot-commandcode projects add <id> --dir <path> [--model m] [--max-turns n] [--tools a,b] [--config k=v ...] [--permission-mode default|auto-accept|plan|dont-ask|bypass] [--yolo]
