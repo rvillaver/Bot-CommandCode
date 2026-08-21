@@ -165,7 +165,8 @@ Both sub-commands default to `pwd` for channel resolution and respect
 
 ## Safety
 
-The bot is a **remote code-execution bridge by design** — it runs `cmd` with shell + file access. Mitigations:
+The bot is the **chat interface for Command Code** — it lets you drive `cmd` (shell + file access) from Discord, so
+it's a powerful surface by design. The safety model keeps that power on a leash:
 
 - **Write gate in print mode** — in headless print mode (`cmd -p`), *all* mutating tools (file writes, shell commands) are
   blocked by a built-in gate. The only way to enable writes is `--yolo`, which sets `cmd` to `bypass` mode for that
