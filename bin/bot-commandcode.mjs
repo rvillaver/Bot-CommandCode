@@ -556,6 +556,8 @@ START:
   npm run botcmd:start     # start the bot under pm2 (MCP becomes live)
   npm run botcmd:status    # confirm it's online
   npm run botcmd:doctor    # same as 'bot-commandcode doctor'
+
+  ('npm run botcmd:<x>' runs 'node bin/bot-commandcode.mjs <x>' — same binary.)
 `);
 }
 
