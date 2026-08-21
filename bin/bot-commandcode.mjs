@@ -450,7 +450,14 @@ async function doctor() {
 
   // .env + DISCORD_TOKEN
   const envFile = resolve(ROOT, '.env');
-  const token = process.env.DISCORD_TOKEN;
+  let token = process.env.DISCORD_TOKEN;
+  if (existsSync(envFile)) {
+    try {
+      const raw = await readFile(envFile, 'utf8');
+      const m = raw.match(/^\s*DISCORD_TOKEN\s*=\s*(.+)\s*$/m);
+      if (m) token = token ?? m[1].trim();
+    } catch { /* keep process.env value */ }
+  }
   if (!existsSync(envFile)) {
     checks.push({ name: '.env file', ok: false, detail: 'missing — run `cp .env.example .env`' });
   } else {
