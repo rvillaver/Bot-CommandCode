@@ -1,5 +1,9 @@
 # dependencies
 node_modules/
+docs/
+AGENTS.md
+.commandcode
+.cmd-relay
 package-lock.json
 
 # runtime state

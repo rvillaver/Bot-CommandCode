@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["bot/**/*.ts"]
+  "include": ["bot/**/*.ts", "mods/**/*.ts", "test/**/*.ts"]
 }

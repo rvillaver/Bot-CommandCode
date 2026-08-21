@@ -16,8 +16,8 @@ and tool runs show **live progress** — no more black box.
 - **One project per channel** — bind a Discord channel to any folder on disk; each has its own session, queue, and
   cmd config (model, max turns, tools, permission mode).
 - **Works from anywhere** — phone, tablet, or desktop: drive your coding agent from a DM or a server channel.
-- **Safe by default** — `cmd` runs in `default` permission mode (mutating actions denied with guidance), deny rules
-  block destructive commands, and the local bridge never leaves `127.0.0.1`.
+- **Safe by default** — `cmd` runs in `default` permission mode (mutating actions denied); projects that need writes opt
+  into `--yolo` with deny rules as the backstop. The local bridge never leaves `127.0.0.1`.
 
 ## Quickstart
 
@@ -92,42 +92,92 @@ queue, and cmd config.
 
 ```bash
 # Register a project — the bot creates + binds a channel named after the folder
-node bin/cmd-relay.mjs projects add myproj --dir /path/to/folder --model deepseek/deepseek-v4-flash
+node bin/bot-commandcode.mjs projects add myproj --dir /path/to/folder --model deepseek/deepseek-v4-flash
 
 # Manual bind/unbind (if you want a different channel)
-node bin/cmd-relay.mjs bind <channelId> <projectId>
-node bin/cmd-relay.mjs unbind <channelId>
+node bin/bot-commandcode.mjs bind <channelId> <projectId>
+node bin/bot-commandcode.mjs unbind <channelId>
 
 # List / remove projects
-node bin/cmd-relay.mjs projects list
-node bin/cmd-relay.mjs projects rm <id>
+node bin/bot-commandcode.mjs projects list
+node bin/bot-commandcode.mjs projects rm <id>
 ```
 
 - `projects add` auto-creates a Discord channel and binds it (requires **Manage Channels**); use `--no-channel` to skip.
-- Per-project flags: `--model`, `--max-turns`, `--tools a,b`, `--config k=v`, `--permission-mode default|auto-accept|bypass`.
+- Per-project flags: `--model`, `--max-turns`, `--tools a,b`, `--config k=v`, `--permission-mode default|auto-accept|plan|dont-ask|bypass`.
 - **Unbound channels are refused politely** — bind one first. DMs are the owner's control plane, not a workspace.
 
 ## PM2 (resilient service)
 
 ```bash
-node bin/cmd-relay.mjs pm2 start      # start under PM2 (auto-restart on crash)
-node bin/cmd-relay.mjs pm2 status
-node bin/cmd-relay.mjs pm2 logs
-node bin/cmd-relay.mjs pm2 stop
+node bin/bot-commandcode.mjs pm2 start      # start under PM2 (auto-restart on crash)
+node bin/bot-commandcode.mjs pm2 status
+node bin/bot-commandcode.mjs pm2 logs
+node bin/bot-commandcode.mjs pm2 stop
 ```
 
 Sessions are persisted to `data/sessions.json` per channel and resume after a restart.
+
+## External workload push (updates & questions)
+
+Other processes — scripts, build jobs, monitoring — can push messages or
+interactive questions into a running bot thread. **No `cmd` involvement needed.**
+
+### `bot-commandcode push` / `npm run botcmd:push`
+
+Push a message into the Discord channel bound to the current project directory:
+
+```bash
+# from within a project directory — pwd is used for channel lookup
+npm run botcmd:push -- "Build complete — 12 tests passed."
+node bin/bot-commandcode.mjs push "Deploying to staging…"
+# target explicitly
+node bin/bot-commandcode.mjs push --channel <channelId> "hello"
+node bin/bot-commandcode.mjs push --project <projectId> "hello"
+```
+
+The bot resolves `dir` (defaults to `pwd`) → project → Discord channel via
+`data/bindings.json`. Override the bridge port with `RELAY_PORT` (default 8787).
+
+### `bot-commandcode ask` / `npm run botcmd:ask`
+
+Push a **question** with button options. The bot renders buttons in Discord;
+when the user clicks one, the answer is POSTed back to a temporary local HTTP
+server the CLI starts, and the CLI prints the answer:
+
+```bash
+npm run botcmd:ask -- "Deploy to production?" "yes" "no" "later"
+```
+
+### Standalone CLI: `bot-cmd-push`
+
+For external workloads that don't have `bot-commandcode` installed, a zero-dependency
+standalone CLI lives in [`tools/bot-cmd-push/`](tools/bot-cmd-push):
+
+```bash
+cd tools/bot-cmd-push && npm i -g .
+bot-cmd-push push "Build #42 succeeded"
+bot-cmd-push ask "Use staging or prod?" "staging" "prod"
+```
+
+Both sub-commands default to `pwd` for channel resolution and respect
+`RELAY_PORT` (default 8787).
 
 ## Safety
 
 The bot is a **remote code-execution bridge by design** — it runs `cmd` with shell + file access. Mitigations:
 
-- **`default` permission mode** (not `--yolo`) — `cmd` prompts for anything mutating; in headless mode a would-be
-  prompt fails closed, so mutating actions are denied with guidance and the turn continues. The agent can read/explore
-  and run read-only shell. A project can opt into `auto-accept` or `bypass` explicitly
-  (`--permission-mode auto-accept`) for trusted workspaces.
+- **Write gate in print mode** — in headless print mode (`cmd -p`), *all* mutating tools (file writes, shell commands) are
+  blocked by a built-in gate. The only way to enable writes is `--yolo`, which sets `cmd` to `bypass` mode for that
+  session and bypasses the write gate. Permission modes like `auto-accept` or `dont-ask` are accepted by `cmd` but
+  are **overridden** by `--yolo` — they do *not* independently enable writes in print mode.
+- **Permission modes** — the bot maps each project's `--permission-mode` to the right `cmd` flags:
+  - `default` / `plan` → `--permission-mode <mode>` (no `--yolo`; writes denied — use for read-only repos).
+  - `auto-accept` / `dont-ask` / `bypass` → `--yolo` (writes allowed; bypass mode).
 - **Deny rules** — `.commandcode/settings.json` → `permissions.deny` blocks destructive commands (`rm -rf /`, `sudo`,
-  force-pushes, …). Deny beats every mode.
+  force-pushes, …). Deny rules beat every mode **including `--yolo`/bypass** — they're the backstop that makes
+  `--yolo` safe to run. A project that needs writes should always pair `--yolo` with deny rules + PreToolUse hooks
+  (see [Command Code hooks docs](https://commandcode.ai/docs/hooks)).
 - **`ALLOWED_CHANNEL_IDS`** restricts who can drive the agent; unbound channels are refused.
 - **Local bridge only** — the mod→bot bridge binds to `127.0.0.1`; never expose it publicly.
 - **Secrets** — `.env` is gitignored; never log or echo the Discord token.

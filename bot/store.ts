@@ -3,14 +3,19 @@ import { resolve } from 'node:path';
 import type { Channel, DMChannel, TextChannel } from 'discord.js';
 import { ChannelType } from 'discord.js';
 
+export type PermissionMode = 'default' | 'auto-accept' | 'plan' | 'dont-ask' | 'bypass';
+
+/** Modes that require --yolo to bypass the print-mode write gate. */
+export const YOLO_MODES: PermissionMode[] = ['auto-accept', 'dont-ask', 'bypass'];
+
 export interface ProjectConfig {
   dir: string;
   model?: string;
   maxTurns?: number;
   tools?: string[];
   config?: Record<string, string>;
-  /** Permission mode for this project's spawns: default | auto-accept | bypass. Defaults to default. */
-  permissionMode?: 'default' | 'auto-accept' | 'bypass';
+  /** Permission mode for this project's cmd spawns. */
+  permissionMode?: PermissionMode;
 }
 
 export interface Store {
@@ -18,9 +23,18 @@ export interface Store {
   bindings: Record<string, string>;
 }
 
-const DATA_DIR = resolve(process.cwd(), 'data');
-const PROJECTS_FILE = resolve(DATA_DIR, 'projects.json');
-const BINDINGS_FILE = resolve(DATA_DIR, 'bindings.json');
+/** Resolve the data dir at call time so tests (and cwd changes) are honored. */
+function dataDir(): string {
+  return resolve(process.cwd(), 'data');
+}
+
+function projectsFile(): string {
+  return resolve(dataDir(), 'projects.json');
+}
+
+function bindingsFile(): string {
+  return resolve(dataDir(), 'bindings.json');
+}
 
 function readJson<T>(file: string, fallback: T): T {
   try {
@@ -31,15 +45,15 @@ function readJson<T>(file: string, fallback: T): T {
 }
 
 function writeJson(file: string, data: unknown): void {
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(dataDir(), { recursive: true });
   writeFileSync(file, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
 /** Load project registry + channel bindings fresh on each call (CLI writes them at runtime). */
 export function loadStore(): Store {
   return {
-    projects: readJson(PROJECTS_FILE, {}),
-    bindings: readJson(BINDINGS_FILE, {}),
+    projects: readJson(projectsFile(), {}),
+    bindings: readJson(bindingsFile(), {}),
   };
 }
 
@@ -57,23 +71,23 @@ export function projectIdForChannel(store: Store, channelId: string): string | u
 
 /** Add or update a project in the registry. Returns the project id. */
 export function saveProject(id: string, cfg: ProjectConfig): void {
-  const projects = readJson<Record<string, ProjectConfig>>(PROJECTS_FILE, {});
+  const projects = readJson<Record<string, ProjectConfig>>(projectsFile(), {});
   projects[id] = cfg;
-  writeJson(PROJECTS_FILE, projects);
+  writeJson(projectsFile(), projects);
 }
 
 /** Delete a project from the registry and unbind every channel bound to it. Returns removed project ids. */
 export function deleteProject(id: string): string[] {
-  const projects = readJson<Record<string, ProjectConfig>>(PROJECTS_FILE, {});
+  const projects = readJson<Record<string, ProjectConfig>>(projectsFile(), {});
   if (!(id in projects)) return [];
   delete projects[id];
-  writeJson(PROJECTS_FILE, projects);
+  writeJson(projectsFile(), projects);
   return unbindProject(id);
 }
 
 /** Remove every channel binding pointing at a project. Returns the unbound channel ids. */
 export function unbindProject(id: string): string[] {
-  const bindings = readJson<Record<string, string>>(BINDINGS_FILE, {});
+  const bindings = readJson<Record<string, string>>(bindingsFile(), {});
   const removed: string[] = [];
   for (const [channelId, projectId] of Object.entries(bindings)) {
     if (projectId === id) {
@@ -81,17 +95,17 @@ export function unbindProject(id: string): string[] {
       removed.push(channelId);
     }
   }
-  if (removed.length > 0) writeJson(BINDINGS_FILE, bindings);
+  if (removed.length > 0) writeJson(bindingsFile(), bindings);
   return removed;
 }
 
 /** Remove a single channel binding. Returns the project id that was bound, or undefined. */
 export function unbindChannel(channelId: string): string | undefined {
-  const bindings = readJson<Record<string, string>>(BINDINGS_FILE, {});
+  const bindings = readJson<Record<string, string>>(bindingsFile(), {});
   const projectId = bindings[channelId];
   if (!projectId) return undefined;
   delete bindings[channelId];
-  writeJson(BINDINGS_FILE, bindings);
+  writeJson(bindingsFile(), bindings);
   return projectId;
 }
 

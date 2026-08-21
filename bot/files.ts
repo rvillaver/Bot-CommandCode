@@ -23,15 +23,18 @@ import type { Message, Attachment } from 'discord.js';
  * The project keeps a `.cmd-relay/out` symlink → the real out dir, so the agent can
  * still write to a path inside its workspace (mod checks resolve to the same place).
  */
-const TRANSFER_ROOT = resolve(process.cwd(), 'data', 'transfer');
-/** Cap on the posted-files registry per channel (oldest evicted). */
 const POSTED_CAP = 100;
 /** Discord attachment limit (standard tier). Files over this are never uploaded. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+/** Resolve the transfer root at call time so tests (and cwd changes) are honored. */
+function transferRoot(): string {
+  return resolve(process.cwd(), 'data', 'transfer');
+}
+
 /** Absolute path to a project's real transfer dir. */
 function transferDir(projectId: string): string {
-  return resolve(TRANSFER_ROOT, projectId);
+  return resolve(transferRoot(), projectId);
 }
 
 /** Where in-bound attachments land, per project. */
@@ -131,19 +134,22 @@ export function hashFile(path: string): string {
  */
 type PostedRegistry = Record<string, Record<string, { name: string; postedAt: number }>>;
 
-const POSTED_FILE = resolve(process.cwd(), 'data', 'posted-files.json');
+/** Resolve the posted-files registry path at call time (tests change cwd). */
+function postedFile(): string {
+  return resolve(process.cwd(), 'data', 'posted-files.json');
+}
 
 function readPosted(): PostedRegistry {
   try {
-    return JSON.parse(readFileSync(POSTED_FILE, 'utf8')) as PostedRegistry;
+    return JSON.parse(readFileSync(postedFile(), 'utf8')) as PostedRegistry;
   } catch {
     return {};
   }
 }
 
 function writePosted(all: PostedRegistry): void {
-  mkdirSync(dirname(POSTED_FILE), { recursive: true });
-  writeFileSync(POSTED_FILE, JSON.stringify(all, null, 2));
+  mkdirSync(dirname(postedFile()), { recursive: true });
+  writeFileSync(postedFile(), JSON.stringify(all, null, 2));
 }
 
 /** True if this exact file content was already posted in this channel. */

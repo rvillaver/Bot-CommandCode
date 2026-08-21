@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import type { Config } from './config.js';
-import type { ProjectConfig } from './store.js';
+import type { ProjectConfig, PermissionMode } from './store.js';
+import { YOLO_MODES } from './store.js';
 
 export interface RunOptions {
   /** Prompt text (passed as -p argument, never stdin per SPEC §1 gotcha 5). */
@@ -46,13 +47,15 @@ export interface RunHandle {
  * line by line (never buffering the whole stream, per SPEC §5.3).
  */
 export function runCmd(config: Config, opts: RunOptions, cb: RelayCallbacks): RunHandle {
+  const mode = opts.project.permissionMode ?? 'default';
+  const permArgs = YOLO_MODES.includes(mode as PermissionMode)
+    ? ['--yolo']
+    : ['--permission-mode', mode];
+
   const args = [
     '-p', opts.prompt,
     '--output-format', 'json',
-    // Safety: default mode (ask for anything mutating) instead of --yolo. Deny rules in
-    // .commandcode/settings.json still win; per-project permissionMode can opt into
-    // auto-accept or bypass for trusted workspaces.
-    '--permission-mode', opts.project.permissionMode ?? 'default',
+    ...permArgs,
     '--skip-onboarding',
     '--tools-enable', 'ask_user_question',
     '--verbose',

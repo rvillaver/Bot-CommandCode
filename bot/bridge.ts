@@ -7,6 +7,17 @@ export interface BridgeHandlers {
   onQuestion: (payload: { sessionId: string; questions: unknown[] }) => void;
   /** A file was written to the out drop-point by a cmd child. */
   onFileReady: (payload: { path: string }) => void;
+  /** An external workload pushed a message (not via cmd). Resolves dir/projectId/channelId → channel. */
+  onPush: (payload: {
+    channelId?: string;
+    projectId?: string;
+    dir?: string;
+    message?: string;
+    question?: { text: string; options: { label: string }[] };
+    callback?: string;
+  }) => void;
+  /** An MCP JSON-RPC request arrived at /mcp. Returns the JSON-RPC response. */
+  onMcp?: (req: unknown) => Promise<unknown>;
 }
 
 /**
@@ -14,8 +25,14 @@ export interface BridgeHandlers {
  * - POST /question  — mod→bot: intercepted ask_user_question
  * - POST /file      — mod→bot: a file landed in the out drop-point
  * - POST /create-channel — CLI→bot: create a channel named after a project folder
+ * - POST /push      — external workload→bot: inject a message or interactive question into a Discord channel
  */
-export function startBridge(port: number, client: Client, handlers: BridgeHandlers): void {
+export interface Bridge {
+  /** Close the HTTP server (used by tests and shutdown paths). */
+  close: () => Promise<void>;
+}
+
+export function startBridge(port: number, client: Client, handlers: BridgeHandlers): Bridge {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS not needed (local); just parse the path.
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
@@ -66,6 +83,55 @@ export function startBridge(port: number, client: Client, handlers: BridgeHandle
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/push') {
+      const { channelId, projectId, dir, message, question, callback } = body as {
+        channelId?: string; projectId?: string; dir?: string;
+        message?: string;
+        question?: { text: string; options: { label: string }[] };
+        callback?: string;
+      };
+      if (!message && !question) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'one of message, or question + callback required' }));
+        return;
+      }
+      if (question && !callback) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'callback required when question is provided' }));
+        return;
+      }
+      if (!channelId && !projectId && !dir) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'one of channelId, projectId, or dir required' }));
+        return;
+      }
+      // Await the handler so a failure to resolve the channel is surfaced to the
+      // caller (the CLI), instead of silently dropping the message.
+      try {
+        await handlers.onPush({ channelId, projectId, dir, message, question, callback });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(422, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: (e as Error).message }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/mcp') {
+      try {
+        const response = handlers.onMcp
+          ? await handlers.onMcp(body)
+          : { jsonrpc: '2.0', id: (body as { id?: unknown })?.id ?? null, error: { code: -32601, message: 'Method not found' } };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(response));
+      } catch (e) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: (e as Error).message } }));
+      }
+      return;
+    }
+
     res.writeHead(404, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: false, error: 'not found' }));
   });
@@ -86,6 +152,10 @@ export function startBridge(port: number, client: Client, handlers: BridgeHandle
     }
   });
   tryListen();
+
+  return {
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
 }
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -104,7 +174,7 @@ async function createChannel(client: Client, name: string, reason?: string): Pro
   if (!guild) throw new Error('Bot is not in any guild');
   const channel = await guild.channels.create({
     name: sanitizeChannelName(name),
-    reason: reason ?? 'cmd-relay project',
+    reason: reason ?? 'bot-commandcode project',
   });
   return channel as TextChannel;
 }

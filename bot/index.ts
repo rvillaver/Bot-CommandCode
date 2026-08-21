@@ -28,6 +28,8 @@ import { startBridge } from './bridge.js';
 import { downloadAttachment, collectOutFiles, ensureOutDir, alreadyPosted, markPosted, clearPosted, outDir, MAX_UPLOAD_BYTES } from './files.js';
 import { shouldFork } from './session.js';
 import { throughlinePreamble, saveThroughline, clearThroughline, loadThroughlineSummary, compactThroughline } from './threadline.js';
+import { chunkMessage, sanitizeChannelName } from './text.js';
+import { handleMcpRequest, type McpCtx } from './mcp.js';
 
 const config = loadConfig();
 
@@ -49,6 +51,10 @@ const activeRuns = new Map<string, RunHandle>();
 /** Pending ask_user_question sets, keyed by session id (bridge → bot). Expiry ~10 min. */
 const pendingQuestions = new Map<string, { questions: unknown[]; channelId: string; expiresAt: number }>();
 const QUESTION_TTL_MS = 10 * 60 * 1000;
+/** Pending push-question callbacks keyed by pushId (external workload two-way Q&A). Expiry ~10 min. */
+const pendingPushCallbacks = new Map<string, { callback: string; options: string[]; channelId: string; expiresAt: number }>();
+/** Pending MCP ask_question resolvers (pushId → resolve(answer)). Set by bot/mcp.ts. */
+const mcpPendingAnswers = new Map<string, (answer: string) => void>();
 
 function loadSessions(): void {
   try {
@@ -113,7 +119,7 @@ async function onReady(c: Client): Promise<void> {
     const guild = c.guilds.cache.first();
     if (guild) {
       const created = await guild.channels.create({
-        name: 'cmd-relay-probe',
+        name: 'bot-commandcode-probe',
         reason: 'Permission check',
       });
       console.log(`Channel create OK: #${created.name} (${created.id})`);
@@ -152,6 +158,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleStatus(interaction);
     }
     return;
+  }
+
+  // External workload push-question button: push:<pushId>:<optIndex>
+  if (interaction.isButton()) {
+    const pushMatch = /^push:(\d+):(\d+)$/.exec(interaction.customId);
+    if (pushMatch) {
+      const pushId = pushMatch[1];
+      const optIndex = Number(pushMatch[2]);
+      const channel = interaction.channel;
+
+      // MCP path: an in-cmd agent asked via MCP — resolve its pending promise.
+      const mcpResolver = mcpPendingAnswers.get(pushId);
+      if (mcpResolver) {
+        const mcpPending = pendingPushCallbacks.get(pushId);
+        const label = mcpPending?.options[optIndex] ?? '';
+        if (!label || !mcpPending) {
+          await interaction.reply({ content: 'Invalid option.', ephemeral: true });
+          return;
+        }
+        if (!channel || channel.id !== mcpPending.channelId) {
+          await interaction.reply({ content: 'This button belongs to another channel.', ephemeral: true });
+          return;
+        }
+        console.log(`[push][mcp] button clicked: pushId=${pushId} answer="${label}"`);
+        mcpResolver(label);
+        mcpPendingAnswers.delete(pushId);
+        pendingPushCallbacks.delete(pushId);
+        await interaction.update({ content: `Answered: ${label}`, components: [] });
+        return;
+      }
+
+      const pending = pendingPushCallbacks.get(pushId);
+      if (!pending || Date.now() > pending.expiresAt) {
+        await interaction.reply({ content: 'This question has expired.', ephemeral: true });
+        return;
+      }
+      const label = pending.options[optIndex] ?? '';
+      console.log(`[push] button clicked: pushId=${pushId} answer="${label}"`);
+      if (!channel || channel.id !== pending.channelId) {
+        await interaction.reply({ content: 'This button belongs to another channel.', ephemeral: true });
+        return;
+      }
+      try {
+        const res = await fetch(pending.callback, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ answer: label }),
+        });
+        if (res.ok) {
+          console.log(`[push] answer "${label}" forwarded to callback: ${pending.callback}`);
+          await interaction.update({ content: `Answered: ${label}`, components: [] });
+          pendingPushCallbacks.delete(pushId);
+        } else {
+          await interaction.reply({ content: `Callback failed (HTTP ${res.status})`, ephemeral: true });
+        }
+      } catch (e) {
+        await interaction.reply({ content: `Callback failed: ${errMsg(e)}`, ephemeral: true });
+      }
+      return;
+    }
   }
 
   // Question button: q:<channelId>:<qIndex>:<optIndex>
@@ -338,13 +404,13 @@ async function handleDmControl(msg: Message): Promise<void> {
       if (!guild) throw new Error('Bot is not in any guild');
       const channel = await guild.channels.create({
         name: sanitizeChannelName(id),
-        reason: `cmd-relay project ${id} (from DM)`,
+        reason: `bot-commandcode project ${id} (from DM)`,
       });
       const bindings = { ...store.bindings, [channel.id]: id };
       writeFileSync(resolve(process.cwd(), 'data', 'bindings.json'), JSON.stringify(bindings, null, 2) + '\n');
       return reply(`✅ Created #${channel.name} (${channel.id}) and bound it to \`${id}\`. Send prompts there.`);
     } catch (e) {
-      return reply(`✅ Project saved, but channel creation failed: ${errMsg(e)}. Bind a channel manually with \`cmd-relay bind <channelId> ${id}\`.`);
+      return reply(`✅ Project saved, but channel creation failed: ${errMsg(e)}. Bind a channel manually with \`bot-commandcode bind <channelId> ${id}\`.`);
     }
   }
 
@@ -372,19 +438,6 @@ async function guildOwnerId(): Promise<string | undefined> {
   } catch {
     return undefined;
   }
-}
-
-/** Discord channel names: lowercase, no spaces (spaces → dashes), strip specials, max 100 chars. */
-function sanitizeChannelName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9-_]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 100);
-  if (!slug) throw new Error('channel name invalid after sanitization');
-  return slug;
 }
 
 client.on(Events.MessageCreate, async (msg) => {
@@ -431,7 +484,7 @@ client.on(Events.MessageCreate, async (msg) => {
   const project = projectForChannel(store, msg.channel.id);
   const projectId = projectIdForChannel(store, msg.channel.id);
   if (!project || !projectId) {
-    await msg.reply('No project bound to this channel. Use `cmd-relay bind <channelId> <projectId>` to set one.');
+    await msg.reply('No project bound to this channel. Use `bot-commandcode bind <channelId> <projectId>` to set one.');
     return;
   }
 
@@ -645,25 +698,6 @@ async function postQuestions(
 }
 
 /**
- * Split long text into ≤maxLen chunks without splitting in the middle of a line
- * where possible (Discord's 2000-char message cap). Never truncates silently.
- */
-function chunkMessage(text: string, maxLen: number): string[] {
-  if (text.length <= maxLen) return [text];
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > maxLen) {
-    // Prefer the last newline within the window; else hard-split at maxLen.
-    const cut = rest.lastIndexOf('\n', maxLen);
-    const at = cut > 0 ? cut + 1 : maxLen;
-    chunks.push(rest.slice(0, at));
-    rest = rest.slice(at);
-  }
-  if (rest) chunks.push(rest);
-  return chunks;
-}
-
-/**
  * Push-only streamer: accumulates text_delta into chunks and sends them as new messages
  * (batched ~1/sec to respect Discord's ~5 sends/5s per channel). Never edits. On finalize,
  * posts the final answer as its own message with optional file attachments.
@@ -815,6 +849,65 @@ startBridge(config.relayPort, client, {
     pendingQuestions.set(sessionId, { questions, channelId, expiresAt: Date.now() + QUESTION_TTL_MS });
     void postQuestions(channel, channelId, sessionId, questions);
   },
+  onPush: async ({ channelId, projectId, dir, message, question, callback }) => {
+    let cid = channelId;
+    if (!cid) {
+      const store = loadStore();
+      if (projectId) {
+        for (const [chan, pid] of Object.entries(store.bindings)) {
+          if (pid === projectId) { cid = chan; break; }
+        }
+      } else if (dir) {
+        let incoming: string;
+        try { incoming = realpathSync(dir); } catch { incoming = resolve(dir); }
+        for (const [chan, pid] of Object.entries(store.bindings)) {
+          const p = store.projects[pid];
+          if (!p) continue;
+          let pdir: string;
+          try { pdir = realpathSync(p.dir); } catch { pdir = resolve(p.dir); }
+          if (pdir === incoming) { cid = chan; break; }
+        }
+      }
+    }
+    if (!cid) {
+      throw new Error(
+        `no channel bound for ${projectId ? `project ${projectId}` : `dir ${dir}`} — ` +
+        'register it with `bot-commandcode projects add <id> --dir <path>` and bind a channel',
+      );
+    }
+    const channel = client.channels.cache.get(cid) as SendableChannel | undefined;
+    if (!channel) {
+      throw new Error(`channel ${cid} not in cache — bot may need to reconnect to see it`);
+    }
+    try {
+      if (question && callback) {
+        const pushId = Date.now().toString();
+        const opts = (question.options ?? []).slice(0, 5);
+        const labels = opts.map((o) => o.label ?? '');
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          opts.map((o, oi) =>
+            new ButtonBuilder()
+              .setCustomId(`push:${pushId}:${oi}`)
+              .setLabel(o.label ?? `Option ${oi + 1}`)
+              .setStyle(ButtonStyle.Primary),
+          ),
+        );
+        await channel.send({ content: question.text ?? 'Question:', components: [row] });
+        pendingPushCallbacks.set(pushId, {
+          callback,
+          options: labels,
+          channelId: cid,
+          expiresAt: Date.now() + QUESTION_TTL_MS,
+        });
+        console.log(`[push] question posted to #${(channel as { name?: string }).name ?? cid} (pushId=${pushId})`);
+      } else if (message) {
+        await channel.send(message);
+        console.log(`[push] posted to #${(channel as { name?: string }).name ?? cid}`);
+      }
+    } catch (e) {
+      console.error(`[push] send failed: ${errMsg(e)}`);
+    }
+  },
   onFileReady: ({ path }) => {
     // Mid-turn file display: a cmd child wrote a file under its project's out dir.
     // Resolve the real path (through the .cmd-relay/out symlink) and find the channel
@@ -859,5 +952,20 @@ startBridge(config.relayPort, client, {
       .send({ content: `📎 **${basename(real)}**`, files: [real] })
       .then(() => console.log(`[file_ready] posted ${real} in ${channelId}`))
       .catch((e) => console.error(`[file_ready] send failed: ${errMsg(e)}`));
+  },
+  onMcp: (req) => {
+    const ctx: McpCtx = {
+      client,
+      pendingAnswers: mcpPendingAnswers,
+      registerPushQuestion: (pushId, options, channelId) => {
+        pendingPushCallbacks.set(pushId, {
+          callback: '', // no HTTP callback for MCP — the promise resolver handles it
+          options,
+          channelId,
+          expiresAt: Date.now() + QUESTION_TTL_MS,
+        });
+      },
+    };
+    return handleMcpRequest(ctx, req as Parameters<typeof handleMcpRequest>[1]);
   },
 });

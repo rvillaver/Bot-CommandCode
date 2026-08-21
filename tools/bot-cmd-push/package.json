@@ -1,0 +1,12 @@
+{
+  "name": "bot-cmd-push",
+  "version": "0.1.0",
+  "description": "Push updates and questions from any local process into a running bot-commandcode Discord bot thread — no cmd required.",
+  "bin": {
+    "bot-cmd-push": "./scripts/cli.mjs"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

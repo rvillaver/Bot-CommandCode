@@ -1,5 +1,5 @@
 {
-  "name": "cmd-relay",
+  "name": "bot-commandcode",
   "version": "0.1.0",
   "private": true,
   "description": "Discord relay for Command Code — chat interface with interaction-aware question buttons",
@@ -9,10 +9,24 @@
   },
   "scripts": {
     "bot": "tsx bot/index.ts",
+    "start": "npm run botcmd:start",
+    "botcmd": "node bin/bot-commandcode.mjs",
+    "botcmd:ask": "node bin/bot-commandcode.mjs ask",
+    "botcmd:doctor": "node bin/bot-commandcode.mjs doctor",
+    "botcmd:setup": "node bin/bot-commandcode.mjs setup",
+    "botcmd:push": "node bin/bot-commandcode.mjs push",
+    "botcmd:restart": "node bin/bot-commandcode.mjs pm2 restart",
+    "botcmd:start": "node bin/bot-commandcode.mjs pm2 start",
+    "botcmd:stop": "node bin/bot-commandcode.mjs pm2 stop",
+    "botcmd:status": "node bin/bot-commandcode.mjs pm2 status",
+    "botcmd:logs": "node bin/bot-commandcode.mjs pm2 logs",
+    "test": "tsx --test test/**/*.test.ts",
+    "test:coverage": "tsx --experimental-test-coverage --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "bin": {
-    "cmd-relay": "./bin/cmd-relay.mjs"
+    "bot-commandcode": "./bin/bot-commandcode.mjs",
+    "botcmd": "./bin/bot-commandcode.mjs"
   },
   "dependencies": {
     "discord.js": "^14.16.3",

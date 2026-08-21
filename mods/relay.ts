@@ -1,7 +1,7 @@
 import type {ModApi} from '@commandcode/harness';
 
 /**
- * cmd-relay mod — the seam between a headless `cmd` run and the Discord bot.
+ * bot-commandcode mod — the seam between a headless `cmd` run and the Discord bot.
  *
  * Two jobs:
  * 1. Intercept `ask_user_question` so the question is forwarded to Discord as buttons

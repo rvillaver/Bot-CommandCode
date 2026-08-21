@@ -1,6 +1,6 @@
 # TESTING — acceptance-criteria walkthrough
 
-Manual walkthrough of the cmd-relay bot against the SPEC §9 acceptance criteria and the
+Manual walkthrough of the bot-commandcode bot against the SPEC §9 acceptance criteria and the
 features added after. Exercise the **real thing**: the running bot under pm2, driven from
 Discord (DM or a bound channel). `tsc --noEmit` green is necessary, never sufficient.
 
@@ -8,8 +8,8 @@ Discord (DM or a bound channel). `tsc --noEmit` green is necessary, never suffic
 
 ```bash
 npm i
-node bin/cmd-relay.mjs pm2 start     # or: npm run bot
-node bin/cmd-relay.mjs projects list # confirm bound channels
+node bin/bot-commandcode.mjs pm2 start     # or: npm run bot
+node bin/bot-commandcode.mjs projects list # confirm bound channels
 ```
 
 Every test below happens in a bound Discord channel (or the bot's DM for owner commands).
@@ -67,7 +67,7 @@ Send: `run git status and summarize`.
 
 ## §9.8 Bot restart
 
-Restart the bot (`node bin/cmd-relay.mjs pm2 stop` then `start`).
+Restart the bot (`node bin/bot-commandcode.mjs pm2 stop` then `start`).
 
 - Expect: sessions reload (`Loaded N session(s)`), `/status` still shows the session,
   a follow-up prompt resumes context.
