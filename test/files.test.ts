@@ -36,7 +36,7 @@ test('attachDir/outDir live under data/transfer/<projectId>', () => {
   assert.equal(outDir('p1'), resolve(dir, 'data', 'transfer', 'p1', 'out'));
 });
 
-test('ensureOutDir creates real dir + .cmd-relay/out symlink in project', () => {
+test('ensureOutDir creates real dir + .bot-commandcode/out symlink in project', () => {
   const proj = join(dir, 'proj');
   mkdirSync(proj, { recursive: true });
   ensureOutDir('p1', proj);
@@ -51,7 +51,7 @@ test('ensureOutDir recreates a stale symlink', () => {
   mkdirSync(proj, { recursive: true });
   const stale = join(dir, 'stale-target');
   mkdirSync(stale, { recursive: true });
-  mkdirSync(resolve(proj, '.cmd-relay'), { recursive: true });
+  mkdirSync(resolve(proj, '.bot-commandcode'), { recursive: true });
   symlinkSync(stale, resolve(proj, OUT_LINK), 'dir');
   ensureOutDir('p1', proj);
   const link = resolve(proj, OUT_LINK);

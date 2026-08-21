@@ -43,7 +43,7 @@ Add the bot to your server (one-time, ~5 minutes) — full steps in [Discord set
 | **Question → buttons** | When the agent calls `ask_user_question`, one button per option; tap to answer, or type a free-text answer |
 | **Tool progress** | 🔧 running / ✅ completed / ❌ errored / 🚫 denied lines while a turn runs |
 | **Session memory** | Each channel resumes its own `cmd` session across turns (`--resume`), survives restarts, and forks before the context bloats |
-| **File transfer** | Attach a file in → the agent reads it; the agent writes to `.cmd-relay/out/` → the file appears as an attachment (dedup'd by content hash) |
+| **File transfer** | Attach a file in → the agent reads it; the agent writes to `.bot-commandcode/out/` → the file appears as an attachment (dedup'd by content hash) |
 | **Workspaces** | One project per channel — register a folder, the bot creates and binds a channel for it |
 | **Slash commands** | `/stop` kills a turn, `/clear` starts fresh, `/status` shows session/queue/project |
 | **DM control plane** | The server owner can manage projects from the bot's DM (`projects list/add/rm`) |
@@ -189,7 +189,7 @@ pollutes your `cmd`, `engineering`, or other target folders:
 
 - **In-bound:** attach a file to a message — the bot downloads it to `<bot>/data/transfer/<projectId>/attachments/`
   and appends `[attached: <path>]` to the prompt so the agent can read it. (Limit: Discord's 25MB file cap.)
-- **Out-bound:** the agent writes files to `<project>/.cmd-relay/out/` (a symlink to
+- **Out-bound:** the agent writes files to `<project>/.bot-commandcode/out/` (a symlink to
   `<bot>/data/transfer/<projectId>/out/`); the bot attaches them mid-turn and on the finalizing message, dedup'd by
   content hash so the same file is never re-sent in a channel.
 

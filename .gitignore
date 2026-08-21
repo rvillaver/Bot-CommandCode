@@ -3,7 +3,7 @@ node_modules/
 docs/
 AGENTS.md
 .commandcode
-.cmd-relay
+.bot-commandcode
 package-lock.json
 
 # runtime state

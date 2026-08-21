@@ -20,7 +20,7 @@ import type { Message, Attachment } from 'discord.js';
  *   <bot-root>/data/transfer/<projectId>/attachments   in-bound Discord attachments
  *   <bot-root>/data/transfer/<projectId>/out           agent's out drop-point
  *
- * The project keeps a `.cmd-relay/out` symlink → the real out dir, so the agent can
+ * The project keeps a `.bot-commandcode/out` symlink → the real out dir, so the agent can
  * still write to a path inside its workspace (mod checks resolve to the same place).
  */
 const POSTED_CAP = 100;
@@ -48,7 +48,7 @@ export function outDir(projectId: string): string {
 }
 
 /** The in-project symlink path the agent writes to (relative to the project dir). */
-export const OUT_LINK = '.cmd-relay/out';
+export const OUT_LINK = '.bot-commandcode/out';
 
 export interface DownloadedAttachment {
   /** Absolute path the file was saved to. */
@@ -77,7 +77,7 @@ export async function downloadAttachment(projectId: string, attachment: Attachme
 
 /**
  * Ensure the project's out drop-point exists: the real dir under data/transfer, plus a
- * `.cmd-relay/out` symlink inside the project pointing at it (so the agent can write to
+ * `.bot-commandcode/out` symlink inside the project pointing at it (so the agent can write to
  * a workspace path). Recreates the symlink if it's missing or dangling.
  */
 export function ensureOutDir(projectId: string, projectDir: string): void {

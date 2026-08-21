@@ -6,7 +6,7 @@ import type {ModApi} from '@commandcode/harness';
  * Two jobs:
  * 1. Intercept `ask_user_question` so the question is forwarded to Discord as buttons
  *    instead of auto-answering option 1 (SPEC §1 gotcha 3, §4).
- * 2. Detect when the model writes a file into `.cmd-relay/out/` and tell the bot to
+ * 2. Detect when the model writes a file into `.bot-commandcode/out/` and tell the bot to
  *    upload it mid-turn (safe file display).
  */
 export default function (cmd: ModApi): void {
@@ -54,7 +54,7 @@ export default function (cmd: ModApi): void {
 		},
 
 		afterToolCall: async ({toolName, input}) => {
-			// Detect writes into the out drop-point. Only files under .cmd-relay/out/
+			// Detect writes into the out drop-point. Only files under .bot-commandcode/out/
 			// are ever surfaced — never arbitrary project paths.
 			const path = filePathFromInput(toolName, input);
 			if (!path) return undefined;
@@ -84,8 +84,8 @@ function filePathFromInput(
 	return undefined;
 }
 
-/** True when the absolute path sits inside <cwd>/.cmd-relay/out. */
+/** True when the absolute path sits inside <cwd>/.bot-commandcode/out. */
 function isUnderOutDir(cwd: string, absPath: string): boolean {
-	const out = `${cwd.replace(/\/+$/, '')}/.cmd-relay/out`;
+	const out = `${cwd.replace(/\/+$/, '')}/.bot-commandcode/out`;
 	return absPath.startsWith(`${out}/`) || absPath === out;
 }

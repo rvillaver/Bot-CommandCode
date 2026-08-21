@@ -76,10 +76,10 @@ Restart the bot (`node bin/bot-commandcode.mjs pm2 stop` then `start`).
 
 - **In-bound:** attach a file → bot downloads to `<bot>/data/transfer/<projectId>/attachments/`
   and the agent can read it (`[attached: …]`).
-- **Out-bound:** ask the agent to write a file to `.cmd-relay/out/` (the symlink) → the file
+- **Out-bound:** ask the agent to write a file to `.bot-commandcode/out/` (the symlink) → the file
   appears as a Discord attachment, **once**. Ask again for the same file → not re-sent
   (`[dedup] skipping duplicate` in logs). Edit the file → re-sent (hash changed).
-- **>25MB:** drop a >25MB file in `.cmd-relay/out/` → bot logs `over 25MB — skipping`,
+- **>25MB:** drop a >25MB file in `.bot-commandcode/out/` → bot logs `over 25MB — skipping`,
   no failed upload.
 
 ## DM control plane (owner only)

@@ -910,7 +910,7 @@ startBridge(config.relayPort, client, {
   },
   onFileReady: ({ path }) => {
     // Mid-turn file display: a cmd child wrote a file under its project's out dir.
-    // Resolve the real path (through the .cmd-relay/out symlink) and find the channel
+    // Resolve the real path (through the .bot-commandcode/out symlink) and find the channel
     // whose project owns it.
     const store = loadStore();
     let channelId: string | undefined;
