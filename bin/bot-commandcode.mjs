@@ -547,7 +547,8 @@ ACTIONS:
 MCP:
   The bot serves an MCP server on the bridge: POST http://127.0.0.1:8787/mcp
   (JSON-RPC: initialize, tools/list, tools/call — push_message, ask_question,
-  list_projects). It starts automatically with the bot — there is no separate
+  start_turn, stop_turn, status_turn, list_projects). It starts automatically
+  with the bot — there is no separate
   "start MCP" step. Register it in a project with:
       cmd mcp add --transport http bot-cmd-push http://127.0.0.1:8787/mcp
   Then agents in that project get mcp__bot-cmd-push__* tools.

@@ -88,6 +88,10 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// Discord gateway/websocket errors must not crash the bot (they're emitted as 'error',
+// which is fatal if unhandled). Log them; the reconnect watchdog handles recovery.
+client.on('error', (e) => console.error('[discord] client error:', errMsg(e)));
+
 client.on(Events.ClientReady, (c) => void onReady(c));
 
 /** Everything that must (re)run whenever the client becomes ready — also after a watchdog reconnect. */
@@ -151,6 +155,9 @@ async function registerSlashCommands(c: Client): Promise<void> {
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Stale/expired Discord interactions (code 10062 "Unknown interaction") must never
+  // crash the bot — wrap the whole handler so a single bad button click is non-fatal.
+  try {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === 'stop') {
       await handleStop(interaction);
@@ -266,6 +273,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (project && pid) void processChannel(channel as SendableChannel, project, pid);
     return;
   }
+  } catch (e) {
+    // A stale/expired interaction token, a missing channel cache, etc. — log and move on.
+    console.error('[interaction] non-fatal error:', errMsg(e));
+  }
 });
 
 /**
@@ -302,6 +313,39 @@ client.on(Events.ChannelDelete, async (channel) => {
   }
 });
 
+/** R30: shared hard-stop logic for /stop (slash), the "stop" text shortcut, and mcp stop_turn.
+ * Kills the cmd subprocess (SIGTERM), clears the queue, returns a status string. */
+function stopChannel(channelId: string): string {
+  const handle = activeRuns.get(channelId);
+  if (!handle) {
+    const queued = channelQueues.get(channelId)?.length ?? 0;
+    return queued > 0 ? `No turn running — ${queued} queued (use /clear to drop them).` : 'No turn is running in this channel.';
+  }
+  handle.kill();
+  // Drop anything queued behind the killed turn — the user asked to stop.
+  channelQueues.delete(channelId);
+  activeRuns.delete(channelId);
+  return '⏹️ Stopped.';
+}
+
+/** R30: shared /status logic for slash + mcp status_turn. */
+function channelStatus(channelId: string): string {
+  const running = activeRuns.has(channelId);
+  const queued = channelQueues.get(channelId)?.length ?? 0;
+  const sessionId = sessions.get(channelId);
+  const store = loadStore();
+  const projectId = projectIdForChannel(store, channelId);
+  const project = projectId ? store.projects[projectId] : undefined;
+  const lines = [
+    `**State:** ${running ? '🔧 running' : queued > 0 ? '⏳ queued' : 'idle'}`,
+    `**Session:** ${sessionId ? `\`${sessionId.slice(0, 8)}…\`` : 'none (starts fresh on next prompt)'}`,
+    `**Queue:** ${queued}`,
+    projectId ? `**Project:** \`${projectId}\` → ${project?.dir ?? '?'}` : '**Project:** unbound',
+  ];
+  return lines.join('\n');
+}
+
+/** /stop — kill the running cmd turn for this channel (hard stop, returns control to Discord). */
 async function handleStop(interaction: ChatInputCommandInteraction): Promise<void> {
   const channelId = interaction.channelId;
   // Forbidden unless this channel is allowed to drive the agent.
@@ -309,17 +353,7 @@ async function handleStop(interaction: ChatInputCommandInteraction): Promise<voi
     await interaction.reply('This channel is not allowed to drive the agent.');
     return;
   }
-  const handle = activeRuns.get(channelId);
-  if (!handle) {
-    const queued = channelQueues.get(channelId)?.length ?? 0;
-    await interaction.reply(queued > 0 ? `No turn running — ${queued} queued (use /clear to drop them).` : 'No turn is running in this channel.');
-    return;
-  }
-  handle.kill();
-  // Drop anything queued behind the killed turn — the user asked to stop.
-  channelQueues.delete(channelId);
-  activeRuns.delete(channelId);
-  await interaction.reply('⏹️ Stopped.');
+  await interaction.reply(stopChannel(channelId));
 }
 
 /** R16: /status — session id, queue length, and current state for this channel. */
@@ -329,20 +363,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
     await interaction.reply('This channel is not allowed to drive the agent.');
     return;
   }
-  const running = activeRuns.has(channelId);
-  const queued = channelQueues.get(channelId)?.length ?? 0;
-  const sessionId = sessions.get(channelId);
-  const store = loadStore();
-  const projectId = projectIdForChannel(store, channelId);
-  const project = projectId ? store.projects[projectId] : undefined;
-
-  const lines = [
-    `**State:** ${running ? '🔧 running' : queued > 0 ? '⏳ queued' : 'idle'}`,
-    `**Session:** ${sessionId ? `\`${sessionId.slice(0, 8)}…\`` : 'none (starts fresh on next prompt)'}`,
-    `**Queue:** ${queued}`,
-    projectId ? `**Project:** \`${projectId}\` → ${project?.dir ?? '?'}` : '**Project:** unbound',
-  ];
-  await interaction.reply(lines.join('\n'));
+  await interaction.reply(channelStatus(channelId));
 }
 
 /**
@@ -445,6 +466,14 @@ client.on(Events.MessageCreate, async (msg) => {
   if (msg.author.bot) return;
   if (!msg.content && msg.attachments.size === 0) return;
 
+  // Text shortcut: "stop" / "/stop" hard-kills the running cmd turn (like the /stop slash
+  // command), so typing Stop halts the subprocess instead of prompting the model. /clear
+  // (above) clears; /stop, /status, /remove are the slash controls.
+  if (msg.content && (msg.content.trim().toLowerCase() === 'stop' || msg.content.trim().toLowerCase() === '/stop')) {
+    await msg.reply(stopChannel(msg.channel.id));
+    return;
+  }
+
   // Reload sessions each message so CLI-seeded sessions (projects add --resume) are picked up live.
   loadSessions();
 
@@ -503,14 +532,9 @@ client.on(Events.MessageCreate, async (msg) => {
     return;
   }
 
-  // Reject-while-running: one turn per channel at a time. If a turn is active (or a
-  // queued prompt is already waiting), refuse the new prompt instead of queueing it —
-  // the user said "stop" to cancel, then sends the follow-up once the turn ends.
-  const busy = activeRuns.has(msg.channel.id) || (channelQueues.get(msg.channel.id)?.length ?? 0) > 0;
-  if (busy) {
-    await msg.reply('⏳ A turn is already running in this channel. Use `/stop` to cancel it, then send your prompt again once it ends.');
-    return;
-  }
+  // R30: a busy channel now queues new prompts (handled at the enqueue below) instead of
+  // rejecting them, so anything pushed into the channel feeds the active session. Control
+  // words (/stop, /clear, /remove slash, the "stop" shortcut above) bypass this.
 
   // F1: in-bound attachments — download into the workspace, append paths to the prompt.
   let prompt2 = prompt;
@@ -531,12 +555,18 @@ client.on(Events.MessageCreate, async (msg) => {
     }
   }
 
-  // Enqueue and start the turn. Reject-while-running (checked above) guarantees the
-  // queue has at most this one item, so no "N ahead" path exists anymore.
+  // R30: Enqueue and start the turn. While a turn is already running, queue the prompt
+  // (the running turn's drain loop resumes with it after it ends) instead of rejecting —
+  // so live channel messages feed the session. /stop (slash/"stop" shortcut) hard-kills.
   const queue = channelQueues.get(msg.channel.id) ?? [];
   queue.push(prompt2);
   channelQueues.set(msg.channel.id, queue);
-  void processChannel(msg.channel, project, projectId);
+  if (!activeRuns.has(msg.channel.id)) {
+    void processChannel(msg.channel, project, projectId);
+  } else {
+    const ahead = queue.length - 1;
+    void msg.reply(ahead > 0 ? `🕓 Queued (${ahead} ahead) — resumes after this turn.` : '🕓 Queued — resumes after this turn.').catch(() => {});
+  }
 });
 
 async function processChannel(channel: SendableChannel, project: ProjectConfig, projectId: string): Promise<void> {
@@ -650,6 +680,12 @@ async function runTurn(channel: SendableChannel, project: ProjectConfig, project
             ? `⚠️ Turn failed (exit code ${exitCode}).\n\`\`\`\n${tail}\n\`\`\``
             : `⚠️ Turn failed (exit code ${exitCode}).`;
           await streamer.finalize(msg, []);
+        }
+        // R30: turn ended (cmd exited). Drain anything queued *during* it so channel
+        // messages feed the session and resume it one at a time (enqueue-during-busy).
+        // stop_turn clears the queue on kill, so a killed turn no-ops here.
+        if ((channelQueues.get(channel.id)?.length ?? 0) > 0) {
+          void processChannel(channel, project, projectId);
         }
       },
     },
@@ -953,7 +989,7 @@ startBridge(config.relayPort, client, {
       .then(() => console.log(`[file_ready] posted ${real} in ${channelId}`))
       .catch((e) => console.error(`[file_ready] send failed: ${errMsg(e)}`));
   },
-  onMcp: (req) => {
+  onMcp: (body, signal) => {
     const ctx: McpCtx = {
       client,
       pendingAnswers: mcpPendingAnswers,
@@ -965,7 +1001,47 @@ startBridge(config.relayPort, client, {
           expiresAt: Date.now() + QUESTION_TTL_MS,
         });
       },
+      // Forget the pending push question so a late button click degrades to
+      // "This question has expired" instead of resolving into a dead MCP call.
+      clearPushQuestion: (pushId) => {
+        pendingPushCallbacks.delete(pushId);
+      },
+      // Director gate: launch a cmd turn that streams live to the channel bound to
+      // this dir/project, exactly as a Discord MessageCreate does. While a turn is
+      // already running, queue the prompt instead of rejecting — the running turn's
+      // drain loop resumes with it (so a caller can feed the active session).
+      startTurn: (channelId, prompt) => {
+        const store = loadStore();
+        const pid = projectIdForChannel(store, channelId);
+        const project = pid ? projectForChannel(store, channelId) : undefined;
+        if (!project || !pid) {
+          throw new Error(
+            `no project bound to channel ${channelId} — bind one with ` +
+              '`bot-commandcode bind <channelId> <projectId>`',
+          );
+        }
+        const queue = channelQueues.get(channelId) ?? [];
+        const wasRunning = activeRuns.has(channelId) || queue.length > 0;
+        ensureOutDir(pid, project.dir);
+        queue.push(prompt);
+        channelQueues.set(channelId, queue);
+        const channel = client.channels.cache.get(channelId) as SendableChannel | undefined;
+        if (!channel) {
+          throw new Error(`channel ${channelId} not in cache — bot may need to reconnect`);
+        }
+        if (wasRunning) {
+          void channel.send(`🕓 Already running — queued (${queue.length - 1} ahead). It'll resume after this turn.`);
+          return `Queued in <#${channelId}> — resumes after the current turn.`;
+        }
+        const safePrompt = prompt.length > 500 ? `${prompt.slice(0, 500)}…` : prompt;
+        void channel.send(`▶️ Starting a cmd turn:\n${safePrompt}`);
+        void processChannel(channel, project, pid);
+        return `Turn launched in <#${channelId}>. Its output is streaming live there; end-of-turn questions land as buttons in that channel.`;
+      },
+      // R30: director control — stop/status a turn by dir/project/channel (mirrors /stop, /status).
+      stopTurn: (channelId: string) => stopChannel(channelId),
+      statusTurn: (channelId: string) => channelStatus(channelId),
     };
-    return handleMcpRequest(ctx, req as Parameters<typeof handleMcpRequest>[1]);
+    return handleMcpRequest(ctx, body as Parameters<typeof handleMcpRequest>[1], signal);
   },
 });

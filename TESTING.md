@@ -96,3 +96,61 @@ Delete a bound channel in Discord.
 
 - Expect: bot kills any active run, deletes the project from the registry, clears the
   channel's session/throughline/posted-files state (`[channelDelete] …` in logs).
+
+## MCP server & director control
+
+The bot serves a JSON-RPC MCP server alongside the bridge on
+`http://127.0.0.1:8787/mcp`. Director tools let an agent inside a `cmd` turn
+manage cmd turns in other Discord channels. Register the server in a project:
+
+```bash
+cmd mcp add --transport http bot-cmd-push http://127.0.0.1:8787/mcp
+```
+
+### MCP server (no bot restart needed)
+
+- `POST http://127.0.0.1:8787/mcp` with `{"jsonrpc":"2.0","id":1,"method":"initialize"}` →
+  expect `protocolVersion`, `capabilities.tools`, `serverInfo.name: "bot-cmd-push"`.
+- `tools/list` → expect all six tools: `push_message`, `ask_question`, `start_turn`,
+  `stop_turn`, `status_turn`, `list_projects`.
+- Unknown tool → `{"isError":true}` in the result, bot alive. Unknown route → 404, bot alive.
+
+### §9.9 Director: start_turn → Discord streams
+
+From inside a `cmd` turn in a bound project directory:
+
+```bash
+cmd mcp call mcp__bot-cmd-push__start_turn --arg prompt="Explain 2+2" --arg dir="$PWD"
+```
+
+- Expect: Discord channel bound to the project shows `▶️ Starting a cmd turn` and the
+  answer streams in; `status_turn` shows `🔧 running`.
+
+### §9.10 Director: stop_turn
+
+While a turn is running, from a second `cmd` turn (or a direct MCP call):
+
+```bash
+cmd mcp call mcp__bot-cmd-push__stop_turn --arg dir="$PWD"
+```
+
+- Expect: cmd subprocess receives SIGTERM, Discord shows `⏹️ Stopped.`, `status_turn`
+  shows `idle`.
+
+### §9.11 Director: queueing during busy
+
+With a turn running in the channel, call `start_turn` again:
+
+- Expect: response is `Queued in <#channel> — resumes after the current turn.`,
+  `status_turn` shows `Queue: 1`. After the running turn finishes, the queue drains
+  automatically. After `stop_turn`, the queue is cleared.
+
+### §9.12 MCP ask_question done-gate
+
+```bash
+cmd mcp call mcp__bot-cmd-push__ask_question --arg question="Pick a color" --arg options="red,blue" --arg dir="$PWD"
+```
+
+- Expect: Discord channel shows a question with one button per option; tapping a button
+  resolves the blocking MCP call (returns the label). Closing the MCP client connection
+  mid-wait cleans up the pending answer without crashing the bot.

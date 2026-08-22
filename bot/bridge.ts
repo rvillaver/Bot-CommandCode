@@ -16,8 +16,10 @@ export interface BridgeHandlers {
     question?: { text: string; options: { label: string }[] };
     callback?: string;
   }) => void;
-  /** An MCP JSON-RPC request arrived at /mcp. Returns the JSON-RPC response. */
-  onMcp?: (req: unknown) => Promise<unknown>;
+  /** An MCP JSON-RPC request arrived at /mcp. Returns the JSON-RPC response.
+   * The signal aborts when the HTTP caller disconnects mid-tool-call (e.g. an MCP ask
+   * that's still waiting on a human button click) so pending state can be cleaned up. */
+  onMcp?: (body: unknown, signal: AbortSignal) => Promise<unknown>;
 }
 
 /**
@@ -119,15 +121,29 @@ export function startBridge(port: number, client: Client, handlers: BridgeHandle
     }
 
     if (req.method === 'POST' && url.pathname === '/mcp') {
+      // Abandon the MCP tool call cleanly if the HTTP caller disconnects mid-flight
+      // (e.g. its transport died while waiting on a human button click). This is the
+      // done-gate's "reconnect / pass control back" path: a late click degrades to the
+      // existing "question expired" UX instead of resolving into a dead socket.
+      // NOTE: listen on `res` (not `req`) — by now readBody() has already consumed the
+      // request stream, so req's 'close' never re-fires on disconnect. res 'close' fires
+      // on connection termination regardless of request-body state.
+      const ac = new AbortController();
+      res.on('close', () => ac.abort());
       try {
         const response = handlers.onMcp
-          ? await handlers.onMcp(body)
+          ? await handlers.onMcp(body, ac.signal)
           : { jsonrpc: '2.0', id: (body as { id?: unknown })?.id ?? null, error: { code: -32601, message: 'Method not found' } };
+        if (res.writableEnded) return;
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(response));
       } catch (e) {
-        res.writeHead(500, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: (e as Error).message } }));
+        const msg = e instanceof Error ? e.message : String(e);
+        if (res.writableEnded) return;
+        try {
+          res.writeHead((e as { code?: number })?.code === 422 ? 422 : 500, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', id: (body as { id?: unknown })?.id ?? null, error: { code: -32603, message: msg } }));
+        } catch { /* client already gone — nothing to write to */ }
       }
       return;
     }

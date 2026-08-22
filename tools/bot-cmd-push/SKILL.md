@@ -50,7 +50,14 @@ Then inside a `cmd` session the tools appear alongside built-ins and are gateabl
 |------|-------------|
 | `mcp__bot-cmd-push__push_message` | Post a message into the channel bound to a dir/project |
 | `mcp__bot-cmd-push__ask_question` | Post a button question and return the user's chosen label |
+| `mcp__bot-cmd-push__start_turn` | Launch a `cmd` turn in a Discord channel; streams live to Discord. Mirrors a user prompt |
+| `mcp__bot-cmd-push__stop_turn` | Hard-stop the running `cmd` turn for a channel. Mirrors `/stop` |
+| `mcp__bot-cmd-push__status_turn` | Show session id, queue length, and current state for a channel. Mirrors `/status` |
 | `mcp__bot-cmd-push__list_projects` | List registered projects + bound channels |
+
+The director tools (`start_turn`/`stop_turn`/`status_turn`) let an agent running *inside* a `cmd` turn manage turns in
+*other* Discord channels — useful for an agent that wants to spawn sub-tasks or check on a parallel channel. All
+three accept `dir`, `projectId`, or `channelId` for channel resolution (same as CLI push/ask).
 
 **Prefer MCP when the caller is a `cmd` agent** (structured calls, permission-gated). Use the CLI below when the
 caller is a script, cron job, or CI pipeline (any local process, no session needed).

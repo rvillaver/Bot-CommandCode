@@ -9,6 +9,10 @@ function ctx(overrides?: Partial<McpCtx>): McpCtx {
     client,
     pendingAnswers: new Map(),
     registerPushQuestion: () => {},
+    clearPushQuestion: () => {},
+    startTurn: () => '',
+    stopTurn: () => '',
+    statusTurn: () => '',
     ...overrides,
   };
 }
@@ -26,12 +30,12 @@ test('ping returns ok', async () => {
   assert.deepEqual(res.result, {});
 });
 
-test('tools/list returns the three tools', async () => {
+test('tools/list returns all tools', async () => {
   const res = await handleMcpRequest(ctx(), { jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} }) as {
     result?: { tools?: { name: string }[] };
   };
   const names = res.result?.tools?.map((t) => t.name) ?? [];
-  assert.deepEqual(names, ['push_message', 'ask_question', 'list_projects']);
+  assert.deepEqual(names, ['push_message', 'ask_question', 'start_turn', 'stop_turn', 'status_turn', 'list_projects']);
 });
 
 test('tools/call list_projects returns a string', async () => {
@@ -76,4 +80,40 @@ test('unknown method returns method-not-found error', async () => {
     error?: { code?: number; message?: string };
   };
   assert.equal(res.error?.code, -32601);
+});
+
+test('tools/call start_turn with unregistered dir errors clearly', async () => {
+  const res = await handleMcpRequest(ctx(), {
+    jsonrpc: '2.0', id: 9, method: 'tools/call',
+    params: { name: 'start_turn', arguments: { dir: '/tmp', prompt: 'hi' } },
+  }) as { result?: { isError?: boolean; content?: { text: string }[] } };
+  assert.equal(res.result?.isError, true);
+  assert.match(res.result?.content?.[0]?.text ?? '', /no channel bound/);
+});
+
+test('tools/call start_turn with empty prompt errors', async () => {
+  const res = await handleMcpRequest(ctx(), {
+    jsonrpc: '2.0', id: 10, method: 'tools/call',
+    params: { name: 'start_turn', arguments: { dir: '/tmp' } },
+  }) as { result?: { isError?: boolean; content?: { text: string }[] } };
+  assert.equal(res.result?.isError, true);
+  assert.match(res.result?.content?.[0]?.text ?? '', /prompt is required/);
+});
+
+test('tools/call stop_turn with no channel errors clearly', async () => {
+  const res = await handleMcpRequest(ctx(), {
+    jsonrpc: '2.0', id: 31, method: 'tools/call',
+    params: { name: 'stop_turn', arguments: { dir: '/tmp' } },
+  }) as { result?: { isError?: boolean; content?: { text: string }[] } };
+  assert.equal(res.result?.isError, true);
+  assert.match(res.result?.content?.[0]?.text ?? '', /no channel bound/);
+});
+
+test('tools/call status_turn with no channel errors clearly', async () => {
+  const res = await handleMcpRequest(ctx(), {
+    jsonrpc: '2.0', id: 32, method: 'tools/call',
+    params: { name: 'status_turn', arguments: { dir: '/tmp' } },
+  }) as { result?: { isError?: boolean; content?: { text: string }[] } };
+  assert.equal(res.result?.isError, true);
+  assert.match(res.result?.content?.[0]?.text ?? '', /no channel bound/);
 });
