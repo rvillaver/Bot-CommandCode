@@ -48,6 +48,7 @@ Add the bot to your server (one-time, ~5 minutes) — full steps in [Discord set
 | **Slash commands** | `/stop` kills a turn, `/clear` starts fresh, `/status` shows session/queue/project |
 | **DM control plane** | The server owner can manage projects from the bot's DM (`projects list/add/rm`) |
 | **Resilient** | Runs under PM2 with auto-restart; sessions reload on boot; a watchdog reconnects the gateway after network drops |
+| **MCP server** | The bot serves an MCP endpoint (`POST http://127.0.0.1:8787/mcp`) with 6 tools — `push_message`, `ask_question`, `start_turn`, `stop_turn`, `status_turn`, `list_projects`. Director tools let an agent inside a `cmd` turn manage turns in other Discord channels |
 
 ## Requirements
 
@@ -162,6 +163,37 @@ bot-cmd-push ask "Use staging or prod?" "staging" "prod"
 
 Both sub-commands default to `pwd` for channel resolution and respect
 `RELAY_PORT` (default 8787).
+
+## MCP server (from inside `cmd`)
+
+The bot also serves an [MCP](https://modelcontextprotocol.io/introduction) server on the same local bridge — **no extra
+step**; it starts automatically with the bot. Register it in any project:
+
+```bash
+cmd mcp add --transport http bot-cmd-push http://127.0.0.1:8787/mcp
+# verify
+cmd mcp list
+```
+
+Inside a `cmd` session the `mcp__bot-cmd-push__*` tools appear alongside built-ins and are gateable by cmd's permission
+rules (`allow`/`deny`/`ask` on `mcp__bot-cmd-push__*`).
+
+| Tool | What it does |
+|------|-------------|
+| `mcp__bot-cmd-push__push_message` | Post a one-way message into a channel |
+| `mcp__bot-cmd-push__ask_question` | Post a button question and **block** until the user picks (up to 10 min) |
+| `mcp__bot-cmd-push__start_turn` | Launch a `cmd` turn in a Discord channel; streams live to Discord |
+| `mcp__bot-cmd-push__stop_turn` | Hard-stop the running turn for a channel (mirrors `/stop`) |
+| `mcp__bot-cmd-push__status_turn` | Show session id, queue length, and state for a channel (mirrors `/status`) |
+| `mcp__bot-cmd-push__list_projects` | List registered projects + bound channels |
+
+The director tools (`start_turn`/`stop_turn`/`status_turn`) let an agent running **inside** a `cmd` turn manage turns in
+*other* Discord channels — useful for spawning sub-tasks or checking on a parallel channel. All tools accept
+`--dir`, `--project`, or `--channel` for channel resolution (you only need one).
+
+**Security** — the MCP endpoint is served the same local-only bridge as the HTTP API (`127.0.0.1` only, no auth, per
+SPEC §2/§4). cmd still runs in `default` permission mode (writes denied) unless `--yolo` is set on the project (see
+§Safety). An MCP client disconnecting mid-`ask_question` aborts the blocked call via signal — no dangling promises.
 
 ## Safety
 

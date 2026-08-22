@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { startBridge } from '../bot/bridge.js';
 
@@ -20,7 +20,7 @@ function mockClient() {
 }
 
 async function freePort(): Promise<number> {
-  const srv = createServer();
+  const srv = http.createServer();
   await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
   const port = (srv.address() as AddressInfo).port;
   await new Promise<void>((resolve) => srv.close(() => resolve()));
@@ -139,4 +139,63 @@ test('unknown route returns 404', async () => {
     assert.equal(res.status, 404);
     assert.equal(res.json.ok, false);
   });
+});
+
+test('/mcp routes to onMcp(body, signal) and returns its response', async () => {
+  let receivedBody: unknown;
+  let receivedSignal: AbortSignal | undefined;
+  await withBridge(
+    {
+      onQuestion: () => {},
+      onFileReady: () => {},
+      onPush: async () => {},
+      onMcp: async (body, signal) => {
+        receivedBody = body;
+        receivedSignal = signal;
+        return { jsonrpc: '2.0', id: 1, result: { ok: true } };
+      },
+    },
+    async (port) => {
+      const res = await post(port, '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+      assert.equal(res.status, 200);
+      assert.equal(res.json.jsonrpc, '2.0');
+      assert.deepEqual(res.json, { jsonrpc: '2.0', id: 1, result: { ok: true } });
+    },
+  );
+  assert.deepEqual(receivedBody, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  assert.ok(receivedSignal instanceof AbortSignal);
+});
+
+test('/mcp aborts onMcp signal when the HTTP caller disconnects mid-ask', async () => {
+  let capturedSignal: AbortSignal | undefined;
+  // onMcp blocks on a promise that only rejects when its signal fires — simulates an
+  // ask_question waiting on a human button click. The bridge must abort it on disconnect.
+  const onMcp = async (_body: unknown, signal: AbortSignal) => {
+    capturedSignal = signal;
+    return new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('caller disconnected')), { once: true });
+    });
+  };
+  const port = await freePort();
+  const bridge = startBridge(
+    port,
+    mockClient() as never,
+    { onQuestion: () => {}, onFileReady: () => {}, onPush: async () => {}, onMcp },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // Issue a POST but DON'T await the response (the hook blocks on purpose).
+  const req = http.request({ port, path: '/mcp', method: 'POST' });
+  req.on('error', () => { /* client-side ECONNRESET is expected after destroy() — we only
+                              test that the server aborted onMcp's signal, not the response */ });
+  req.write('{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_question"}}');
+  req.end();
+  await new Promise((resolve) => setTimeout(resolve, 50)); // let onMcp start
+  assert.ok(capturedSignal, 'onMcp should have received a signal');
+  assert.equal(capturedSignal!.aborted, false, 'signal not yet aborted');
+
+  req.destroy(); // client side disconnect
+  await new Promise((resolve) => setTimeout(resolve, 100)); // let 'close' -> ac.abort()
+  assert.equal(capturedSignal!.aborted, true, 'signal should abort on caller disconnect');
+  await bridge.close();
 });
